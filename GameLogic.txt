@@ -1,0 +1,210 @@
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
+
+public class GameLogic {
+
+    public static final int BOARD_SIZE = 4;
+    private int[][] board;
+    private long score;
+    private boolean gameOver;
+    private boolean win;
+    private Random random;
+
+    public GameLogic() {
+        random = new Random();
+        resetGame();
+    }
+
+    public void resetGame() {
+        board = new int[BOARD_SIZE][BOARD_SIZE];
+        score = 0;
+        gameOver = false;
+        win = false;
+        // Add initial tiles
+        addRandomTile();
+        addRandomTile();
+    }
+
+    // Getters
+    public int[][] getBoard() {
+        return board;
+    }
+
+    public long getScore() {
+        return score;
+    }
+
+    public boolean isGameOver() {
+        // Check game over state only when necessary (e.g., after a move fails or board is full)
+        if (!canMove()) {
+            gameOver = true;
+        }
+        return gameOver;
+    }
+
+    public boolean checkGameOver() {
+        if (!canMove()) {
+            gameOver = true;
+        }
+        return gameOver;
+    }
+
+
+    public boolean isWin() {
+        return win; // Win state is set during merging
+    }
+
+    // Helper to get a list of empty cell coordinates
+    private List<int[]> getEmptyCells() {
+        List<int[]> emptyCells = new ArrayList<>();
+        for (int r = 0; r < BOARD_SIZE; r++) {
+            for (int c = 0; c < BOARD_SIZE; c++) {
+                if (board[r][c] == 0) {
+                    emptyCells.add(new int[]{r, c});
+                }
+            }
+        }
+        return emptyCells;
+    }
+
+    // Add a new tile (90% chance for 2, 10% for 4)
+    public void addRandomTile() {
+        List<int[]> emptyCells = getEmptyCells();
+        if (!emptyCells.isEmpty()) {
+            int[] cell = emptyCells.get(random.nextInt(emptyCells.size()));
+            board[cell[0]][cell[1]] = (random.nextInt(10) == 0) ? 4 : 2;
+        }
+        // After adding, check if the game is now over
+        checkGameOver();
+    }
+
+    // --- Move Logic Helpers ---
+
+    // Rotates the board 90 degrees clockwise
+    private void rotateBoard() {
+        int[][] rotatedBoard = new int[BOARD_SIZE][BOARD_SIZE];
+        for (int r = 0; r < BOARD_SIZE; r++) {
+            for (int c = 0; c < BOARD_SIZE; c++) {
+                rotatedBoard[c][BOARD_SIZE - 1 - r] = board[r][c];
+            }
+        }
+        board = rotatedBoard;
+    }
+
+    // Processes one line (row) for a left move
+    // Returns true if the line was changed
+    private boolean processLine(int[] line) {
+        boolean changed = false;
+        List<Integer> nonZeros = new ArrayList<>();
+        for (int val : line) {
+            if (val != 0) {
+                nonZeros.add(val);
+            }
+        }
+
+        List<Integer> mergedLine = new ArrayList<>();
+        boolean[] merged = new boolean[nonZeros.size()]; // Track merged tiles
+        for (int i = 0; i < nonZeros.size(); i++) {
+            if (i + 1 < nonZeros.size() && nonZeros.get(i).equals(nonZeros.get(i + 1)) && !merged[i] && !merged[i+1]) {
+                int mergedValue = nonZeros.get(i) * 2;
+                mergedLine.add(mergedValue);
+                score += mergedValue;
+                if (mergedValue == 2048) win = true; // Check win condition
+                merged[i] = true;
+                merged[i + 1] = true;
+                changed = true;
+                i++; // Skip next tile
+            } else if (!merged[i]){
+                mergedLine.add(nonZeros.get(i));
+            }
+        }
+
+
+        // Fill the rest with zeros
+        int[] finalLine = new int[BOARD_SIZE];
+        for (int i = 0; i < mergedLine.size(); i++) {
+            finalLine[i] = mergedLine.get(i);
+        }
+
+        // Check if the original line is different from the final line
+        boolean positionChanged = false;
+        for(int i = 0; i < BOARD_SIZE; i++) {
+            if(line[i] != finalLine[i]) {
+                positionChanged = true;
+                break;
+            }
+        }
+        if(positionChanged) changed = true; // Consider shifts as change too
+
+
+        // Update the original line
+        System.arraycopy(finalLine, 0, line, 0, BOARD_SIZE);
+
+        return changed;
+    }
+
+
+    // --- Move Operations ---
+    // Return true if the board state changed after the move
+
+    public boolean moveLeft() {
+        boolean changed = false;
+        for (int r = 0; r < BOARD_SIZE; r++) {
+            // Pass the actual board row to processLine
+            if (processLine(board[r])) {
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+
+    public boolean moveRight() {
+        rotateBoard();
+        rotateBoard();
+        boolean changed = moveLeft();
+        rotateBoard();
+        rotateBoard();
+        return changed;
+    }
+
+    public boolean moveUp() {
+        rotateBoard();
+        rotateBoard();
+        rotateBoard();
+        boolean changed = moveLeft();
+        rotateBoard();
+        return changed;
+    }
+
+    public boolean moveDown() {
+        rotateBoard();
+        boolean changed = moveLeft();
+        rotateBoard();
+        rotateBoard();
+        rotateBoard();
+        return changed;
+    }
+
+
+    // Check if any moves are possible
+    private boolean canMove() {
+        if (!getEmptyCells().isEmpty()) {
+            return true; // Can always move if there's an empty cell (a tile can slide)
+        }
+        // Check for possible merges horizontally
+        for (int r = 0; r < BOARD_SIZE; r++) {
+            for (int c = 0; c < BOARD_SIZE - 1; c++) {
+                if (board[r][c] == board[r][c + 1]) return true;
+            }
+        }
+        // Check for possible merges vertically
+        for (int c = 0; c < BOARD_SIZE; c++) {
+            for (int r = 0; r < BOARD_SIZE - 1; r++) {
+                if (board[r][c] == board[r + 1][c]) return true;
+            }
+        }
+        return false;
+    }
+}

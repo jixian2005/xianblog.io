@@ -1,0 +1,37 @@
+import java.awt.Color;
+import java.util.HashMap;
+import java.util.Map;
+
+public class Tile {
+    private static final Color DEFAULT_BG = new Color(0xCDC1B4); // Empty tile background
+    private static final Map<Integer, Color> BG_COLORS = new HashMap<>();
+
+    static {
+        BG_COLORS.put(2, new Color(0xeee4da));
+        BG_COLORS.put(4, new Color(0xede0c8));
+        BG_COLORS.put(8, new Color(0xf2b179));
+        BG_COLORS.put(16, new Color(0xf59563));
+        BG_COLORS.put(32, new Color(0xf67c5f));
+        BG_COLORS.put(64, new Color(0xf65e3b));
+        BG_COLORS.put(128, new Color(0xedcf72));
+        BG_COLORS.put(256, new Color(0xedcc61));
+        BG_COLORS.put(512, new Color(0xedc850));
+        BG_COLORS.put(1024, new Color(0xedc53f));
+        BG_COLORS.put(2048, new Color(0xedc22e));
+        // Add more colors for higher values if desired
+        BG_COLORS.put(4096, new Color(0x3c3a32)); // Example for higher tile
+    }
+
+    public static Color getBackgroundColor(int value) {
+        return BG_COLORS.getOrDefault(value, DEFAULT_BG); // Return default if value not in map
+    }
+
+    public static Color getForegroundColor(int value) {
+        // Dark text for lower values, light text for higher values
+        return value < 16 ? new Color(0x776e65) : new Color(0xf9f6f2);
+    }
+
+    public static Color getEmptyTileColor() {
+        return DEFAULT_BG;
+    }
+}

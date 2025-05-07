@@ -1,0 +1,138 @@
+import java.awt.Point;
+import java.awt.event.KeyEvent;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+
+// Represents a single tile's animation (movement)
+class AnimationInfo {
+    int value;
+    int startRow, startCol;
+    int endRow, endCol;
+    Point currentPixelPos; // Current drawing position in pixels
+    Point startPixelPos;
+    Point endPixelPos;
+
+    public AnimationInfo(int value, int startRow, int startCol, int endRow, int endCol, int tileSize, int tileMargin) {
+        this.value = value;
+        this.startRow = startRow;
+        this.startCol = startCol;
+        this.endRow = endRow;
+        this.endCol = endCol;
+
+        this.startPixelPos = calculatePixelPos(startRow, startCol, tileSize, tileMargin);
+        this.endPixelPos = calculatePixelPos(endRow, endCol, tileSize, tileMargin);
+        this.currentPixelPos = new Point(startPixelPos); // Start at the beginning
+    }
+
+    // Calculate top-left pixel coordinate for a given grid cell
+    static Point calculatePixelPos(int row, int col, int tileSize, int tileMargin) {
+        int x = tileMargin + col * (tileSize + tileMargin);
+        int y = tileMargin + row * (tileSize + tileMargin);
+        return new Point(x, y);
+    }
+
+    // Update current position based on animation progress (0.0 to 1.0)
+    public void update(double progress) {
+        int currentX = (int) (startPixelPos.x + (endPixelPos.x - startPixelPos.x) * progress);
+        int currentY = (int) (startPixelPos.y + (endPixelPos.y - startPixelPos.y) * progress);
+        this.currentPixelPos.setLocation(currentX, currentY);
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        AnimationInfo that = (AnimationInfo) o;
+        // Consider animations equal if they end at the same spot
+        return endRow == that.endRow && endCol == that.endCol;
+    }
+
+    @Override
+    public int hashCode() {
+        // Hash based on the destination cell
+        return Objects.hash(endRow, endCol);
+    }
+}
+
+// Manages calculation and state of animations for a move
+class AnimationManager {
+
+    private static final int TILE_SIZE = 100; // Must match GameBoardPanel
+    private static final int TILE_MARGIN = 15; // Must match GameBoardPanel
+
+    // Calculates the list of animations needed based on board states before/after move
+    public static List<AnimationInfo> calculateAnimations(int[][] boardBefore, int[][] boardAfter, int moveDirection) {
+        List<AnimationInfo> animations = new ArrayList<>();
+        int size = boardBefore.length;
+
+        // Keep track of tiles in the final board already accounted for by an animation
+        boolean[][] claimedAfter = new boolean[size][size];
+
+        // Determine search direction based on move
+        // We search *backwards* from the final position
+        int rowStep = 0, colStep = 0;
+        switch (moveDirection) {
+            case KeyEvent.VK_UP:    rowStep = 1; break; // Search down
+            case KeyEvent.VK_DOWN:  rowStep = -1; break; // Search up
+            case KeyEvent.VK_LEFT:  colStep = 1; break; // Search right
+            case KeyEvent.VK_RIGHT: colStep = -1; break; // Search left
+        }
+
+        // Iterate through the final board state
+        for (int r = 0; r < size; r++) {
+            for (int c = 0; c < size; c++) {
+                if (boardAfter[r][c] != 0) { // Found a tile in the final state
+                    int currentVal = boardAfter[r][c];
+                    int mergeVal = currentVal / 2; // Potential value of tiles that merged into this one
+
+                    // Search backwards from (r, c) in the 'boardBefore'
+                    int prev_r = r;
+                    int prev_c = c;
+                    boolean foundMatch = false;
+
+                    while (prev_r >= 0 && prev_r < size && prev_c >= 0 && prev_c < size) {
+                        int beforeVal = boardBefore[prev_r][prev_c];
+
+                        if (beforeVal != 0) { // Found a tile in the previous state
+                            if (beforeVal == currentVal && !foundMatch) {
+                                // Case 1: Simple move (value matches, first one found backward)
+                                animations.add(new AnimationInfo(currentVal, prev_r, prev_c, r, c, TILE_SIZE, TILE_MARGIN));
+                                boardBefore[prev_r][prev_c] = 0; // Mark as used
+                                foundMatch = true; // Found the tile, stop backward search for *this specific tile*
+                                break; // Exit while loop
+                            } else if (beforeVal == mergeVal) {
+                                // Case 2: Merge detected (value is half)
+                                // Add animation for this merging tile
+                                animations.add(new AnimationInfo(mergeVal, prev_r, prev_c, r, c, TILE_SIZE, TILE_MARGIN));
+                                boardBefore[prev_r][prev_c] = 0; // Mark as used
+                                // Don't set foundMatch = true yet, need to find the other half potentially
+                            }
+                        }
+
+                        // Step backwards
+                        if (rowStep == 0 && colStep == 0) break; // Should not happen with valid moveDirection
+                        prev_r += rowStep;
+                        prev_c += colStep;
+                    }
+                }
+            }
+        }
+
+
+        // Add animations for any remaining tiles in boardBefore (shouldn't happen with correct logic?)
+        // Optional: Add "new tile appearing" animation info here if needed later
+
+        return animations;
+    }
+
+    // Helper to create a deep copy of the board
+    public static int[][] deepCopy(int[][] original) {
+        if (original == null) return null;
+        int[][] result = new int[original.length][];
+        for (int i = 0; i < original.length; i++) {
+            result[i] = original[i].clone();
+        }
+        return result;
+    }
+}

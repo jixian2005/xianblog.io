@@ -1,0 +1,356 @@
+import javax.swing.*;
+import java.awt.*;
+import java.awt.event.*;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
+public class GameBoardPanel extends JPanel implements KeyListener, MouseListener, MouseMotionListener {
+
+    private static final int TILE_SIZE = 100;
+    private static final int TILE_MARGIN = 15;
+    private static final int ANIMATION_DURATION = 100; // Milliseconds for animation
+
+    private GameLogic gameLogic;
+    private JLabel scoreLabel;
+
+    // Animation related fields
+    private Timer animationTimer;
+    private List<AnimationInfo> currentAnimations;
+    private boolean isAnimating = false;
+    private long animationStartTime;
+    private int currentMoveDirection = -1; // Store the direction of the move being animated
+
+    // Mouse swipe detection variables
+    private int startX, startY;
+    private boolean dragging = false;
+    private static final int SWIPE_THRESHOLD = 30;
+
+    public GameBoardPanel(GameLogic logic, JLabel scoreLabelRef) {
+        this.gameLogic = logic;
+        this.scoreLabel = scoreLabelRef;
+        this.currentAnimations = new ArrayList<>();
+
+        setPreferredSize(calculatePanelSize());
+        setBackground(new Color(0xBBADA0));
+
+        setFocusable(true);
+        addKeyListener(this);
+        addMouseListener(this);
+        addMouseMotionListener(this);
+
+        // Setup the animation timer
+        animationTimer = new Timer(15, new ActionListener() { // ~60 FPS updates
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                updateAnimation();
+            }
+        });
+        animationTimer.setRepeats(true);
+    }
+
+    private Dimension calculatePanelSize() {
+        int size = GameLogic.BOARD_SIZE * TILE_SIZE + (GameLogic.BOARD_SIZE + 1) * TILE_MARGIN;
+        return new Dimension(size, size);
+    }
+
+    public void resetGame() {
+        animationTimer.stop(); // Stop any ongoing animation
+        isAnimating = false;
+        currentAnimations.clear();
+        gameLogic.resetGame();
+        updateScore();
+        repaint();
+        requestFocusInWindow();
+    }
+
+    private void updateScore() {
+        if (scoreLabel != null) {
+            scoreLabel.setText("Score: " + gameLogic.getScore());
+        }
+    }
+
+    // --- Animation Handling ---
+
+    private void startAnimation(int moveDirection) {
+        if (isAnimating) return; // Don't start if already animating
+
+        int[][] boardBefore = AnimationManager.deepCopy(gameLogic.getBoard());
+        boolean moved = false;
+
+        // Perform the move on the logic board
+        switch (moveDirection) {
+            case KeyEvent.VK_UP:    moved = gameLogic.moveUp(); break;
+            case KeyEvent.VK_DOWN:  moved = gameLogic.moveDown(); break;
+            case KeyEvent.VK_LEFT:  moved = gameLogic.moveLeft(); break;
+            case KeyEvent.VK_RIGHT: moved = gameLogic.moveRight(); break;
+        }
+
+        if (moved) {
+            int[][] boardAfter = gameLogic.getBoard(); // Get the state *after* the move logic ran
+            currentMoveDirection = moveDirection; // Store direction for calculation
+
+            // Calculate animations based on before/after states
+            // Pass a copy of boardBefore because calculateAnimations might modify it
+            currentAnimations = AnimationManager.calculateAnimations(
+                    AnimationManager.deepCopy(boardBefore), boardAfter, currentMoveDirection
+            );
+
+            if (!currentAnimations.isEmpty()) {
+                isAnimating = true;
+                animationStartTime = System.currentTimeMillis();
+                animationTimer.start();
+                repaint(); // Start drawing the animation
+            } else {
+                // Move was logical but resulted in no visual change? (Shouldn't happen often)
+                // Or calculation failed? Add new tile directly.
+                finishMove();
+            }
+        } else {
+            // Move was not possible, check for game over immediately
+            checkGameOver();
+        }
+    }
+
+    private void updateAnimation() {
+        long elapsedTime = System.currentTimeMillis() - animationStartTime;
+        double progress = Math.min(1.0, (double) elapsedTime / ANIMATION_DURATION);
+
+        for (AnimationInfo anim : currentAnimations) {
+            anim.update(progress);
+        }
+
+        repaint(); // Redraw at updated positions
+
+        if (progress >= 1.0) {
+            animationTimer.stop();
+            isAnimating = false;
+            currentAnimations.clear(); // Clear animations list for next paint
+            finishMove(); // Add new tile, update score, etc. AFTER animation
+        }
+    }
+
+    // Actions to perform after animation completes or if no animation needed
+    private void finishMove() {
+        gameLogic.addRandomTile(); // Add the new random tile
+        updateScore();            // Update score display
+        repaint();                // Final repaint to show new tile and correct positions
+        checkGameOver();          // Check game state after adding tile
+    }
+
+    private void checkGameOver() {
+        if (gameLogic.checkGameOver()) {
+            repaint(); // Repaint to show game over overlay if needed
+        }
+    }
+
+
+    // --- Drawing Logic ---
+
+    @Override
+    protected void paintComponent(Graphics g) {
+        super.paintComponent(g);
+        Graphics2D g2d = (Graphics2D) g;
+        g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g2d.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+
+        drawGrid(g2d); // Draw background grid squares
+
+        // Set to keep track of cells covered by animation destinations
+        Set<Point> animatedDestinationCells = new HashSet<>();
+        if (isAnimating) {
+            for (AnimationInfo anim : currentAnimations) {
+                animatedDestinationCells.add(new Point(anim.endCol, anim.endRow));
+            }
+        }
+
+        // Draw static tiles (those not ending where an animation ends)
+        int[][] board = gameLogic.getBoard();
+        for (int r = 0; r < GameLogic.BOARD_SIZE; r++) {
+            for (int c = 0; c < GameLogic.BOARD_SIZE; c++) {
+                // Don't draw static tile if an animation is currently landing here
+                if (!isAnimating || !animatedDestinationCells.contains(new Point(c, r))) {
+                    if (board[r][c] != 0) {
+                        drawTile(g2d, board[r][c], r, c); // Draw static tile
+                    }
+                }
+            }
+        }
+
+
+        // Draw animating tiles on top
+        if (isAnimating) {
+            for (AnimationInfo anim : currentAnimations) {
+                // Use the value from the *logic board* at the destination for merged tiles
+                // Or use anim.value if merge animation is more complex later
+                int valueToDraw = gameLogic.getBoard()[anim.endRow][anim.endCol];
+                // If value is 0 means the tile is disappearing (part of merge, use original val)
+                if(valueToDraw == 0 && board[anim.endRow][anim.endCol] == 0) {
+                    valueToDraw = anim.value; // Draw the original value if destination is empty (tile disappearing?)
+                }
+
+
+                drawAnimatedTile(g2d, valueToDraw, anim.currentPixelPos.x, anim.currentPixelPos.y);
+            }
+        }
+
+
+        // Draw Game Over or Win overlay if needed (on the very top)
+        if (gameLogic.isGameOver()) {
+            drawGameOverOverlay(g2d);
+        } else if (gameLogic.isWin()) {
+            drawWinOverlay(g2d);
+        }
+    }
+
+    // Draws the background grid cells
+    private void drawGrid(Graphics2D g2d) {
+        g2d.setColor(new Color(0xCDC1B4)); // Empty tile background color slightly darker than board
+        for (int r = 0; r < GameLogic.BOARD_SIZE; r++) {
+            for (int c = 0; c < GameLogic.BOARD_SIZE; c++) {
+                int x = TILE_MARGIN + c * (TILE_SIZE + TILE_MARGIN);
+                int y = TILE_MARGIN + r * (TILE_SIZE + TILE_MARGIN);
+                g2d.fillRoundRect(x, y, TILE_SIZE, TILE_SIZE, 10, 10);
+            }
+        }
+    }
+
+    // Draws a tile at a specific grid cell (STATIC)
+    private void drawTile(Graphics2D g2d, int value, int r, int c) {
+        int x = TILE_MARGIN + c * (TILE_SIZE + TILE_MARGIN);
+        int y = TILE_MARGIN + r * (TILE_SIZE + TILE_MARGIN);
+        drawAnimatedTile(g2d, value, x, y); // Reuse drawing logic
+    }
+
+    // Draws a tile at specific pixel coordinates (ANIMATED or STATIC)
+    private void drawAnimatedTile(Graphics2D g2d, int value, int x, int y) {
+        if (value == 0) return; // Don't draw empty tiles
+
+        g2d.setColor(Tile.getBackgroundColor(value));
+        g2d.fillRoundRect(x, y, TILE_SIZE, TILE_SIZE, 10, 10); // Rounded corners
+
+        g2d.setColor(Tile.getForegroundColor(value));
+
+        String sValue = String.valueOf(value);
+        int fontSize = (sValue.length() < 3) ? 48 : (sValue.length() < 4 ? 40 : 32);
+        Font font = new Font("Arial", Font.BOLD, fontSize);
+        g2d.setFont(font);
+
+        FontMetrics fm = g2d.getFontMetrics(font);
+        int textWidth = fm.stringWidth(sValue);
+        int textHeight = fm.getAscent() - fm.getDescent();
+
+        g2d.drawString(sValue, x + (TILE_SIZE - textWidth) / 2, y + (TILE_SIZE + textHeight) / 2);
+    }
+
+
+    private void drawGameOverOverlay(Graphics2D g2d) {
+        // Overlay drawing code as before...
+        g2d.setColor(new Color(128, 128, 128, 180)); // Semi-transparent grey
+        g2d.fillRect(0, 0, getWidth(), getHeight());
+        g2d.setColor(Color.WHITE);
+        g2d.setFont(new Font("Arial", Font.BOLD, 50));
+        String text = "Game Over!";
+        FontMetrics fm = g2d.getFontMetrics();
+        int textWidth = fm.stringWidth(text);
+        g2d.drawString(text, (getWidth() - textWidth) / 2, getHeight() / 2);
+    }
+
+    private void drawWinOverlay(Graphics2D g2d) {
+        // Overlay drawing code as before...
+        g2d.setColor(new Color(255, 215, 0, 180)); // Semi-transparent gold
+        g2d.fillRect(0, 0, getWidth(), getHeight());
+        g2d.setColor(Color.WHITE);
+        g2d.setFont(new Font("Arial", Font.BOLD, 50));
+        String text = "You Win!";
+        FontMetrics fm = g2d.getFontMetrics();
+        int textWidth = fm.stringWidth(text);
+        g2d.drawString(text, (getWidth() - textWidth) / 2, getHeight() / 2);
+    }
+
+
+    // --- Input Handling ---
+
+    @Override
+    public void keyTyped(KeyEvent e) { }
+
+    @Override
+    public void keyPressed(KeyEvent e) {
+        if (isAnimating || gameLogic.isGameOver()) return; // Ignore input during animation or game over
+
+        int moveDirection = -1;
+        switch (e.getKeyCode()) {
+            case KeyEvent.VK_UP:
+            case KeyEvent.VK_W:
+                moveDirection = KeyEvent.VK_UP;
+                break;
+            case KeyEvent.VK_DOWN:
+            case KeyEvent.VK_S:
+                moveDirection = KeyEvent.VK_DOWN;
+                break;
+            case KeyEvent.VK_LEFT:
+            case KeyEvent.VK_A:
+                moveDirection = KeyEvent.VK_LEFT;
+                break;
+            case KeyEvent.VK_RIGHT:
+            case KeyEvent.VK_D:
+                moveDirection = KeyEvent.VK_RIGHT;
+                break;
+            case KeyEvent.VK_R:
+                resetGame();
+                return; // Don't start animation after reset
+        }
+
+        if (moveDirection != -1) {
+            startAnimation(moveDirection);
+        }
+    }
+
+    @Override
+    public void keyReleased(KeyEvent e) { }
+
+    @Override
+    public void mousePressed(MouseEvent e) {
+        if (isAnimating || gameLogic.isGameOver()) return;
+        startX = e.getX();
+        startY = e.getY();
+        dragging = true;
+    }
+
+    @Override
+    public void mouseReleased(MouseEvent e) {
+        if (!dragging || isAnimating || gameLogic.isGameOver()) {
+            dragging = false;
+            return;
+        }
+        dragging = false;
+
+        int endX = e.getX();
+        int endY = e.getY();
+        int dx = endX - startX;
+        int dy = endY - startY;
+        int moveDirection = -1;
+
+        if (Math.abs(dx) > Math.abs(dy)) { // Horizontal swipe
+            if (Math.abs(dx) > SWIPE_THRESHOLD) {
+                moveDirection = (dx > 0 ? KeyEvent.VK_RIGHT : KeyEvent.VK_LEFT);
+            }
+        } else { // Vertical swipe
+            if (Math.abs(dy) > SWIPE_THRESHOLD) {
+                moveDirection = (dy > 0 ? KeyEvent.VK_DOWN : KeyEvent.VK_UP);
+            }
+        }
+
+        if (moveDirection != -1) {
+            startAnimation(moveDirection);
+        }
+    }
+
+    // Other mouse listener methods (empty implementations)
+    @Override public void mouseDragged(MouseEvent e) { if (!dragging) return; }
+    @Override public void mouseClicked(MouseEvent e) {}
+    @Override public void mouseEntered(MouseEvent e) {}
+    @Override public void mouseExited(MouseEvent e) {}
+    @Override public void mouseMoved(MouseEvent e) {}
+}
